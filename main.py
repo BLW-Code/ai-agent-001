@@ -1,8 +1,14 @@
+#third party imports
 import os
+import json
 import argparse
 from dotenv import load_dotenv
 from openai import OpenAI
-from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
+
+#local imports
+from call_functions import available_functions, call_function
+from prompts import system_prompt
+from config import AI_TEMPERATURE
 def main():
     #command line args
     parser = argparse.ArgumentParser(description="Chatbot")
@@ -12,6 +18,7 @@ def main():
 
     #messages
     messages = [
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": args.user_prompt},
     ]
     
@@ -30,19 +37,32 @@ def main():
     response = client.chat.completions.create(
         model="openrouter/free",
         messages=messages, # type:ignore
+        temperature=AI_TEMPERATURE,
+        tools=available_functions, #type:ignore
     )
     usage = response.usage
     prompt_tokens = usage.prompt_tokens # type:ignore
     response_tokens = usage.completion_tokens # type:ignore
-    message_content = response.choices[0].message.content
+    message = response.choices[0].message
+    message_content = message.content
+    tool_calls = message.tool_calls
 
     if usage:
         if args.verbose:
             print(f"User prompt: {messages[0]["content"]}")
             print(f"Prompt tokens: {prompt_tokens}")
             print(f"Response tokens: {response_tokens}")
-        print("Response:")
-        print(message_content)
+        if tool_calls:
+            for tool_call in tool_calls:
+                tool_message = call_function(tool_call)
+                if not tool_message.get("content"):
+                    raise Exception("Error: Tool call did not contain a result")
+
+                if args.verbose:
+                    print(f"-> {tool_message['content']}")
+        else:
+            print("Response:")
+            print(message_content)
     else:
         raise RuntimeError("Usage object empty. API call failed.")
 
