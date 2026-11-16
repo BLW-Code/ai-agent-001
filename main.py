@@ -1,6 +1,6 @@
 #third party imports
 import os
-import json
+import sys
 import argparse
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -8,7 +8,7 @@ from openai import OpenAI
 #local imports
 from call_functions import available_functions, call_function
 from prompts import system_prompt
-from config import AI_TEMPERATURE
+from config import AI_TEMPERATURE, MAX_AGENT_ACTIONS
 def main():
     #command line args
     parser = argparse.ArgumentParser(description="Chatbot")
@@ -33,38 +33,51 @@ def main():
         base_url = "https://openrouter.ai/api/v1",
         api_key=api_key
     )
-
-    response = client.chat.completions.create(
-        model="openrouter/free",
-        messages=messages, # type:ignore
-        temperature=AI_TEMPERATURE,
-        tools=available_functions, #type:ignore
-    )
-    usage = response.usage
-    prompt_tokens = usage.prompt_tokens # type:ignore
-    response_tokens = usage.completion_tokens # type:ignore
-    message = response.choices[0].message
-    message_content = message.content
-    tool_calls = message.tool_calls
-
-    if usage:
-        if args.verbose:
-            print(f"User prompt: {messages[0]["content"]}")
-            print(f"Prompt tokens: {prompt_tokens}")
-            print(f"Response tokens: {response_tokens}")
-        if tool_calls:
-            for tool_call in tool_calls:
-                tool_message = call_function(tool_call)
-                if not tool_message.get("content"):
-                    raise Exception("Error: Tool call did not contain a result")
-
-                if args.verbose:
-                    print(f"-> {tool_message['content']}")
+    for ai_action in range(MAX_AGENT_ACTIONS):
+        response = client.chat.completions.create(
+            model="openrouter/free",
+            messages=messages, # type:ignore
+            temperature=AI_TEMPERATURE,
+            tools=available_functions, #type:ignore
+        )
+        
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens # type:ignore
+        response_tokens = usage.completion_tokens # type:ignore
+        
+        message = response.choices[0].message
+        message_content = message.content
+        #add messasge to the conversation
+        messages.append(message)
+        
+        tool_calls = message.tool_calls
+    
+        if usage:
+            if args.verbose:
+                print(f"User prompt: {messages[0]["content"]}")
+                print(f"Prompt tokens: {prompt_tokens}")
+                print(f"Response tokens: {response_tokens}")
+            if tool_calls:
+                for tool_call in tool_calls:
+                    tool_message = call_function(tool_call)
+                    #add tool call to the conversation
+                    messages.append(tool_message)
+                    if not tool_message.get("content"):
+                        raise Exception("Error: Tool call did not contain a result")
+    
+                    if args.verbose:
+                        print(f"-> {tool_message['content']}")
+            else:
+                print("Response:")
+                print(message_content)
+                #exit ai agent loop
+                break
         else:
-            print("Response:")
-            print(message_content)
-    else:
-        raise RuntimeError("Usage object empty. API call failed.")
+            raise RuntimeError("Usage object empty. API call failed.")
+
+        if ai_action == MAX_AGENT_ACTIONS - 1:
+            print(f"Agent Timed Out. Number of Actions: {ai_action}")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
